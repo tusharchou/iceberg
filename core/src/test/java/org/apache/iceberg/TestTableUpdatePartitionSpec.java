@@ -84,6 +84,42 @@ public class TestTableUpdatePartitionSpec extends TestBase {
   }
 
   @TestTemplate
+  public void testChangeBucketToIdentityTransform() {
+    // Current spec: bucket("data", 16) on field 'data_bucket' (field id 1000)
+
+    table.updateSpec()
+        .removeField("data_bucket") // Remove the bucket transform on 'data'
+        .addField("data")          // Add identity transform on 'data'
+        .commit();
+
+    // After commit, specId should be 1, lastAssignedFieldId should be 1001
+
+    // V1Assert for V1 partition spec
+    V1Assert.assertEquals(
+        "Should soft delete data_bucket and add identity('data')",
+        PartitionSpec.builderFor(table.schema())
+            .withSpecId(1)
+            .alwaysNull("data", "data_bucket") // The old bucket transform is soft-deleted
+            .identity("data") // The new identity transform field
+            .build(),
+        table.spec());
+
+    // V2Assert for V2 partition spec
+    // In V2, soft-deleted fields are removed, only active fields remain.
+    // Assuming 'data' column is of LongType based on common Iceberg test setups.
+    V2Assert.assertEquals(
+        "Should hard delete data_bucket and add identity('data')",
+        PartitionSpec.builderFor(table.schema())
+            .withSpecId(1)
+            .add(1, 1001, "data", Transforms.identity(Types.LongType.get()))
+            .build(),
+        table.spec());
+
+    assertThat(table.spec().lastAssignedFieldId()).isEqualTo(1001);
+    assertThat(table.spec().specId()).isEqualTo(1);
+  }
+
+  @TestTemplate
   public void testNoopCommit() {
     TableMetadata current = table.ops().current();
     int currentVersion = TestTables.metadataVersion("test");
